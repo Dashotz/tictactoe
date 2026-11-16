@@ -1,0 +1,152 @@
+[
+  {
+    "username": "DoodleKing",
+    "wins": 14,
+    "gamesPlayed": 18,
+    "markId": "crown",
+    "avatar": {
+      "colorIndex": 2,
+      "eyesIndex": 1,
+      "mouthIndex": 1,
+      "hatIndex": 1
+    },
+    "updatedAt": 1731760000000,
+    "losses": 0,
+    "draws": 0
+  },
+  {
+    "username": "InkSlinger",
+    "wins": 13,
+    "gamesPlayed": 20,
+    "markId": "star",
+    "avatar": {
+      "colorIndex": 7,
+      "eyesIndex": 7,
+      "mouthIndex": 1,
+      "hatIndex": 3
+    },
+    "updatedAt": 1794842914124,
+    "losses": 0,
+    "draws": 3
+  },
+  {
+    "username": "SketchyFox",
+    "wins": 9,
+    "gamesPlayed": 14,
+    "markId": "flame",
+    "avatar": {
+      "colorIndex": 1,
+      "eyesIndex": 2,
+      "mouthIndex": 2,
+      "hatIndex": 2
+    },
+    "updatedAt": 1731740000000,
+    "losses": 0,
+    "draws": 0
+  },
+  {
+    "username": "NeonMochi",
+    "wins": 7,
+    "gamesPlayed": 10,
+    "markId": "star",
+    "avatar": {
+      "colorIndex": 5,
+      "eyesIndex": 4,
+      "mouthIndex": 4,
+      "hatIndex": 4
+    },
+    "updatedAt": 1731730000000,
+    "losses": 0,
+    "draws": 0
+  },
+  {
+    "username": "ChalkKnight",
+    "wins": 6,
+    "gamesPlayed": 9,
+    "markId": "swords",
+    "avatar": {
+      "colorIndex": 4,
+      "eyesIndex": 5,
+      "mouthIndex": 5,
+      "hatIndex": 7
+    },
+    "updatedAt": 1731720000000,
+    "losses": 0,
+    "draws": 0
+  },
+  {
+    "username": "TurboScribble",
+    "wins": 5,
+    "gamesPlayed": 8,
+    "markId": "bolt",
+    "avatar": {
+      "colorIndex": 3,
+      "eyesIndex": 7,
+      "mouthIndex": 3,
+      "hatIndex": 0
+    },
+    "updatedAt": 1731710000000,
+    "losses": 0,
+    "draws": 0
+  },
+  {
+    "username": "WaffleWizard",
+    "wins": 4,
+    "gamesPlayed": 7,
+    "markId": "classic-o",
+    "avatar": {
+      "colorIndex": 6,
+      "eyesIndex": 6,
+      "mouthIndex": 6,
+      "hatIndex": 6
+    },
+    "updatedAt": 1731700000000,
+    "losses": 0,
+    "draws": 0
+  },
+  {
+    "username": "GlitchPanda",
+    "wins": 3,
+    "gamesPlayed": 10,
+    "markId": "swords",
+    "avatar": {
+      "colorIndex": 2,
+      "eyesIndex": 4,
+      "mouthIndex": 0,
+      "hatIndex": 5
+    },
+    "updatedAt": 1794842914125,
+    "losses": 2,
+    "draws": 3
+  },
+  {
+    "username": "SkribblBot",
+    "wins": 2,
+    "gamesPlayed": 2,
+    "markId": "classic-o",
+    "avatar": {
+      "colorIndex": 1,
+      "eyesIndex": 3,
+      "mouthIndex": 2,
+      "hatIndex": 3
+    },
+    "updatedAt": 1794841935406,
+    "losses": 0,
+    "draws": 0
+  },
+  {
+    "username": "CrayonSamurai",
+    "wins": 2,
+    "gamesPlayed": 4,
+    "markId": "rocket",
+    "avatar": {
+      "colorIndex": 1,
+      "eyesIndex": 3,
+      "mouthIndex": 1,
+      "hatIndex": 1
+    },
+    "updatedAt": 1731680000000,
+    "losses": 0,
+    "draws": 0
+  }
+]
