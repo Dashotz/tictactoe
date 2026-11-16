@@ -1,69 +1,103 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
+import os from "os";
 import path from "path";
 import { INITIAL_LEADERBOARD } from "@/constants/game-constants";
 import {
   MatchResultType,
+  mergeLeaderboards,
+  sortAndCapTop10,
   upsertLeaderboardEntry,
 } from "@/lib/leaderboard-service";
 import { AvatarConfig, LeaderboardEntry, MarkId } from "@/types/game";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DATA_FILE = path.join(DATA_DIR, "leaderboard.json");
+// Disable Vercel static/edge caching so GET always returns live state
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
-let memoryLeaderboard: LeaderboardEntry[] = [...INITIAL_LEADERBOARD];
+const LOCAL_DATA_DIR = path.join(process.cwd(), "data");
+const LOCAL_DATA_FILE = path.join(LOCAL_DATA_DIR, "leaderboard.json");
+const TMP_DATA_FILE = path.join(os.tmpdir(), "tictactoe-leaderboard.json");
 
-function normalizeEntries(entries: LeaderboardEntry[]): LeaderboardEntry[] {
-  return entries
-    .map((e) => ({
-      ...e,
-      losses: e.losses ?? 0,
-      draws: e.draws ?? 0,
-    }))
-    .sort((a, b) => b.wins - a.wins || b.updatedAt - a.updatedAt)
-    .slice(0, 10);
+declare global {
+  // eslint-disable-next-line no-var
+  var __tictactoeLeaderboard: LeaderboardEntry[] | undefined;
+}
+
+function getMemoryStore(): LeaderboardEntry[] {
+  if (!globalThis.__tictactoeLeaderboard) {
+    globalThis.__tictactoeLeaderboard = [...INITIAL_LEADERBOARD];
+  }
+  return globalThis.__tictactoeLeaderboard;
+}
+
+function setMemoryStore(entries: LeaderboardEntry[]) {
+  globalThis.__tictactoeLeaderboard = sortAndCapTop10(entries);
 }
 
 async function readLeaderboard(): Promise<LeaderboardEntry[]> {
+  let current = getMemoryStore();
+
+  // 1. Check writable /tmp store first (works on Vercel serverless)
   try {
-    const raw = await fs.readFile(DATA_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      memoryLeaderboard = normalizeEntries(parsed);
-      return memoryLeaderboard;
+    const tmpRaw = await fs.readFile(TMP_DATA_FILE, "utf-8");
+    const tmpParsed = JSON.parse(tmpRaw);
+    if (Array.isArray(tmpParsed) && tmpParsed.length > 0) {
+      current = mergeLeaderboards(tmpParsed, current);
     }
   } catch {
-    try {
-      await fs.mkdir(DATA_DIR, { recursive: true });
-      await fs.writeFile(
-        DATA_FILE,
-        JSON.stringify(memoryLeaderboard, null, 2),
-        "utf-8"
-      );
-    } catch {
-      // Read-only filesystem fallback
-    }
+    // No /tmp file yet
   }
-  return normalizeEntries(memoryLeaderboard);
+
+  // 2. Check project data/leaderboard.json (works in local dev)
+  try {
+    const localRaw = await fs.readFile(LOCAL_DATA_FILE, "utf-8");
+    const localParsed = JSON.parse(localRaw);
+    if (Array.isArray(localParsed) && localParsed.length > 0) {
+      current = mergeLeaderboards(localParsed, current);
+    }
+  } catch {
+    // Ignore if missing
+  }
+
+  setMemoryStore(current);
+  return getMemoryStore();
 }
 
 async function writeLeaderboard(entries: LeaderboardEntry[]): Promise<void> {
-  const top10 = normalizeEntries(entries);
-  memoryLeaderboard = top10;
+  const top10 = sortAndCapTop10(entries);
+  setMemoryStore(top10);
+  const serialized = JSON.stringify(top10, null, 2);
+
+  // Always write to os.tmpdir() (writable on Vercel)
   try {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-    await fs.writeFile(DATA_FILE, JSON.stringify(top10, null, 2), "utf-8");
+    await fs.writeFile(TMP_DATA_FILE, serialized, "utf-8");
   } catch {
-    // Ignore on read-only serverless
+    // Ignore
+  }
+
+  // Also write to local data/leaderboard.json when running locally
+  try {
+    await fs.mkdir(LOCAL_DATA_DIR, { recursive: true });
+    await fs.writeFile(LOCAL_DATA_FILE, serialized, "utf-8");
+  } catch {
+    // Expected on Vercel's read-only /var/task directory
   }
 }
 
 export async function GET() {
   const entries = await readLeaderboard();
-  return NextResponse.json({
-    leaderboard: entries.slice(0, 10),
-    updatedAt: Date.now(),
-  });
+  return NextResponse.json(
+    {
+      leaderboard: entries.slice(0, 10),
+      updatedAt: Date.now(),
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      },
+    }
+  );
 }
 
 export async function POST(request: Request) {
@@ -80,9 +114,15 @@ export async function POST(request: Request) {
         avatar: AvatarConfig;
         result: MatchResultType;
       }>;
+      snapshot?: LeaderboardEntry[];
     };
 
     let updated = await readLeaderboard();
+
+    // Merge client's snapshot first so a cold-started serverless instance never loses existing wins
+    if (Array.isArray(body.snapshot) && body.snapshot.length > 0) {
+      updated = mergeLeaderboards(body.snapshot, updated);
+    }
 
     if (Array.isArray(body.players) && body.players.length > 0) {
       for (const p of body.players) {
@@ -112,19 +152,26 @@ export async function POST(request: Request) {
         },
         result: body.result ?? (body.didWin ? "win" : "loss"),
       });
-    } else {
+    } else if (!Array.isArray(body.snapshot)) {
       return NextResponse.json(
-        { error: "Player payload is required" },
+        { error: "Player payload or snapshot is required" },
         { status: 400 }
       );
     }
 
     await writeLeaderboard(updated);
 
-    return NextResponse.json({
-      leaderboard: updated,
-      updatedAt: Date.now(),
-    });
+    return NextResponse.json(
+      {
+        leaderboard: updated,
+        updatedAt: Date.now(),
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        },
+      }
+    );
   } catch {
     return NextResponse.json(
       { error: "Invalid request payload" },

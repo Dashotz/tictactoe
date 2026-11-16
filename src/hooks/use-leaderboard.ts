@@ -8,12 +8,29 @@ import {
 } from "@/constants/game-constants";
 import {
   MatchResultType,
+  mergeLeaderboards,
   upsertLeaderboardEntry,
 } from "@/lib/leaderboard-service";
 import { LeaderboardEntry, PlayerProfile } from "@/types/game";
 
 interface UseLeaderboardOptions {
   onToast?: (title: string, subtitle: string) => void;
+}
+
+function readLocalLeaderboard(): LeaderboardEntry[] {
+  if (typeof window === "undefined") return INITIAL_LEADERBOARD;
+  try {
+    const cached = localStorage.getItem(LOCAL_STORAGE_LEADERBOARD_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return mergeLeaderboards(parsed, INITIAL_LEADERBOARD);
+      }
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return INITIAL_LEADERBOARD;
 }
 
 export function useLeaderboard({ onToast }: UseLeaderboardOptions = {}) {
@@ -24,16 +41,19 @@ export function useLeaderboard({ onToast }: UseLeaderboardOptions = {}) {
   const broadcastRef = useRef<BroadcastChannel | null>(null);
 
   const fetchLeaderboard = useCallback(async () => {
+    const localEntries = readLocalLeaderboard();
+
     try {
       const res = await fetch("/api/leaderboard", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.leaderboard)) {
-          const top10 = data.leaderboard.slice(0, 10);
-          setLeaderboard(top10);
+          // Merge local + server so a cold-started Vercel function never overwrites local wins
+          const merged = mergeLeaderboards(localEntries, data.leaderboard);
+          setLeaderboard(merged);
           localStorage.setItem(
             LOCAL_STORAGE_LEADERBOARD_KEY,
-            JSON.stringify(top10)
+            JSON.stringify(merged)
           );
           setLastSyncedAt(
             new Date().toLocaleTimeString([], {
@@ -42,31 +62,48 @@ export function useLeaderboard({ onToast }: UseLeaderboardOptions = {}) {
               second: "2-digit",
             })
           );
+
+          // If local had newer scores than a cold-started server, heal the server
+          const serverTopWins = data.leaderboard[0]?.wins ?? 0;
+          const mergedTopWins = merged[0]?.wins ?? 0;
+          if (mergedTopWins > serverTopWins) {
+            fetch("/api/leaderboard", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ snapshot: merged }),
+            }).catch(() => {});
+          }
           return;
         }
       }
     } catch {
-      // Offline fallback to localStorage
+      // Offline fallback to localEntries
     }
 
-    try {
-      const cached = localStorage.getItem(LOCAL_STORAGE_LEADERBOARD_KEY);
-      if (cached) {
-        setLeaderboard(JSON.parse(cached).slice(0, 10));
-      }
-    } catch {
-      // Ignore storage errors
-    }
+    setLeaderboard(localEntries);
   }, []);
 
   useEffect(() => {
+    // Load local storage immediately on mount before network round-trip
+    setLeaderboard(readLocalLeaderboard());
     fetchLeaderboard();
 
     if (typeof window !== "undefined" && "BroadcastChannel" in window) {
       const ch = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
       ch.onmessage = (event) => {
         if (event.data?.leaderboard) {
-          setLeaderboard(event.data.leaderboard.slice(0, 10));
+          setLeaderboard((prev) => {
+            const merged = mergeLeaderboards(event.data.leaderboard, prev);
+            try {
+              localStorage.setItem(
+                LOCAL_STORAGE_LEADERBOARD_KEY,
+                JSON.stringify(merged)
+              );
+            } catch {
+              // Ignore
+            }
+            return merged;
+          });
           setLastSyncedAt("Just now");
         }
       };
@@ -94,12 +131,15 @@ export function useLeaderboard({ onToast }: UseLeaderboardOptions = {}) {
         result,
       }));
 
+      let optimisticSnapshot: LeaderboardEntry[] = [];
+
       // Frame-0 optimistic update
       setLeaderboard((prev) => {
-        let next = [...prev];
+        let next = mergeLeaderboards(prev, readLocalLeaderboard());
         for (const p of playersPayload) {
           next = upsertLeaderboardEntry(next, p);
         }
+        optimisticSnapshot = next;
         try {
           localStorage.setItem(
             LOCAL_STORAGE_LEADERBOARD_KEY,
@@ -142,18 +182,28 @@ export function useLeaderboard({ onToast }: UseLeaderboardOptions = {}) {
         const res = await fetch("/api/leaderboard", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ players: playersPayload }),
+          body: JSON.stringify({
+            snapshot: optimisticSnapshot,
+            players: playersPayload,
+          }),
         });
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data.leaderboard)) {
-            const top10 = data.leaderboard.slice(0, 10);
-            setLeaderboard(top10);
-            broadcastRef.current?.postMessage({ leaderboard: top10 });
+            const merged = mergeLeaderboards(
+              optimisticSnapshot,
+              data.leaderboard
+            );
+            setLeaderboard(merged);
+            localStorage.setItem(
+              LOCAL_STORAGE_LEADERBOARD_KEY,
+              JSON.stringify(merged)
+            );
+            broadcastRef.current?.postMessage({ leaderboard: merged });
           }
         }
       } catch {
-        // Optimistic update already applied
+        // Optimistic update already applied in localStorage
       }
     },
     [onToast]
