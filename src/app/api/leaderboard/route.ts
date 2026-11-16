@@ -6,7 +6,7 @@ import { INITIAL_LEADERBOARD } from "@/constants/game-constants";
 import {
   MatchResultType,
   mergeLeaderboards,
-  sortAndCapTop10,
+  sortLeaderboardPool,
   upsertLeaderboardEntry,
 } from "@/lib/leaderboard-service";
 import { AvatarConfig, LeaderboardEntry, MarkId } from "@/types/game";
@@ -26,13 +26,15 @@ declare global {
 
 function getMemoryStore(): LeaderboardEntry[] {
   if (!globalThis.__tictactoeLeaderboard) {
-    globalThis.__tictactoeLeaderboard = [...INITIAL_LEADERBOARD];
+    globalThis.__tictactoeLeaderboard = sortLeaderboardPool([
+      ...INITIAL_LEADERBOARD,
+    ]);
   }
   return globalThis.__tictactoeLeaderboard;
 }
 
 function setMemoryStore(entries: LeaderboardEntry[]) {
-  globalThis.__tictactoeLeaderboard = sortAndCapTop10(entries);
+  globalThis.__tictactoeLeaderboard = sortLeaderboardPool(entries);
 }
 
 async function readLeaderboard(): Promise<LeaderboardEntry[]> {
@@ -65,9 +67,9 @@ async function readLeaderboard(): Promise<LeaderboardEntry[]> {
 }
 
 async function writeLeaderboard(entries: LeaderboardEntry[]): Promise<void> {
-  const top10 = sortAndCapTop10(entries);
-  setMemoryStore(top10);
-  const serialized = JSON.stringify(top10, null, 2);
+  const pool = sortLeaderboardPool(entries);
+  setMemoryStore(pool);
+  const serialized = JSON.stringify(pool, null, 2);
 
   // Always write to os.tmpdir() (writable on Vercel)
   try {
@@ -89,7 +91,7 @@ export async function GET() {
   const entries = await readLeaderboard();
   return NextResponse.json(
     {
-      leaderboard: entries.slice(0, 10),
+      leaderboard: entries,
       updatedAt: Date.now(),
     },
     {
@@ -113,6 +115,9 @@ export async function POST(request: Request) {
         markId: MarkId;
         avatar: AvatarConfig;
         result: MatchResultType;
+        minWins?: number;
+        minLosses?: number;
+        minDraws?: number;
       }>;
       snapshot?: LeaderboardEntry[];
     };
@@ -137,6 +142,9 @@ export async function POST(request: Request) {
               hatIndex: 0,
             },
             result: p.result,
+            minWins: p.minWins,
+            minLosses: p.minLosses,
+            minDraws: p.minDraws,
           });
         }
       }

@@ -18,8 +18,16 @@ interface UseTicTacToeGameOptions {
   p2: PlayerProfile;
   vsBot: boolean;
   soundEnabled: boolean;
-  onWin: (winnerProfile: PlayerProfile, loserProfile: PlayerProfile) => void;
-  onDraw: (p1Profile: PlayerProfile, p2Profile: PlayerProfile) => void;
+  onWin: (
+    winnerProfile: PlayerProfile,
+    loserProfile: PlayerProfile,
+    nextScores: GameScores
+  ) => void;
+  onDraw: (
+    p1Profile: PlayerProfile,
+    p2Profile: PlayerProfile,
+    nextScores: GameScores
+  ) => void;
 }
 
 export function useTicTacToeGame({
@@ -75,25 +83,30 @@ export function useTicTacToeGame({
           const winnerId = result.winner;
           const winnerProfile = winnerId === "p1" ? p1 : p2;
           const loserProfile = winnerId === "p1" ? p2 : p1;
+          const nextScores: GameScores = {
+            ...scores,
+            [winnerId]: scores[winnerId] + 1,
+          };
 
           playTactileSound("win", soundEnabled);
           fireWinConfetti(winnerId);
 
-          setScores((prev) => ({
-            ...prev,
-            [winnerId]: prev[winnerId] + 1,
-          }));
+          setScores(nextScores);
           setStreaks((prev) => ({
             p1: winnerId === "p1" ? prev.p1 + 1 : 0,
             p2: winnerId === "p2" ? prev.p2 + 1 : 0,
           }));
 
-          onWin(winnerProfile, loserProfile);
+          onWin(winnerProfile, loserProfile, nextScores);
         } else {
+          const nextScores: GameScores = {
+            ...scores,
+            draws: scores.draws + 1,
+          };
           playTactileSound("draw", soundEnabled);
-          setScores((prev) => ({ ...prev, draws: prev.draws + 1 }));
+          setScores(nextScores);
           setStreaks({ p1: 0, p2: 0 });
-          onDraw(p1, p2);
+          onDraw(p1, p2, nextScores);
         }
       } else {
         setTurn(turn === "p1" ? "p2" : "p1");
@@ -107,6 +120,7 @@ export function useTicTacToeGame({
       soundEnabled,
       p1,
       p2,
+      scores,
       fireWinConfetti,
       onWin,
       onDraw,

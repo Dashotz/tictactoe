@@ -13,6 +13,7 @@ import { useLeaderboard } from "@/hooks/use-leaderboard";
 import { useTicTacToeGame } from "@/hooks/use-tictactoe-game";
 import { playTactileSound } from "@/lib/sound-fx";
 import {
+  GameScores,
   MobileTab,
   PlayerId,
   PlayerProfile,
@@ -56,8 +57,12 @@ export default function SkribblTicTacToePage() {
   } = useLeaderboard({ onToast: pushToast });
 
   const handleDrawOutcome = useCallback(
-    (p1Profile: PlayerProfile, p2Profile: PlayerProfile) => {
-      recordDraw(p1Profile, p2Profile);
+    (
+      p1Profile: PlayerProfile,
+      p2Profile: PlayerProfile,
+      nextScores: GameScores
+    ) => {
+      recordDraw(p1Profile, p2Profile, nextScores);
       pushToast(
         "Stalemate Draw!",
         "+1 Draw recorded for both players. Hit New Game!"

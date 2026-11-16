@@ -2,11 +2,21 @@ import { AvatarConfig, LeaderboardEntry, MarkId } from "@/types/game";
 
 export type MatchResultType = "win" | "loss" | "draw";
 
+const MAX_STORED_PLAYERS = 100;
+
 /**
- * Sorts leaderboard entries by wins desc, draws desc, losses asc, updatedAt desc, capped at Top 10.
+ * Sorts leaderboard entries by wins desc, draws desc, losses asc, updatedAt desc.
+ * Stores up to 100 players in the pool so players at 1 win are NOT deleted before they reach Top 10!
+ * (The UI slices the Top 10 for display.)
  */
-export function sortAndCapTop10(entries: LeaderboardEntry[]): LeaderboardEntry[] {
+export function sortLeaderboardPool(
+  entries: LeaderboardEntry[],
+  limit = MAX_STORED_PLAYERS
+): LeaderboardEntry[] {
   return entries
+    .filter(
+      (e) => e?.username && e.username.trim().toLowerCase() !== "skribblbot"
+    )
     .map((e) => ({
       ...e,
       losses: e.losses ?? 0,
@@ -22,12 +32,11 @@ export function sortAndCapTop10(entries: LeaderboardEntry[]): LeaderboardEntry[]
         return (a.losses ?? 0) - (b.losses ?? 0);
       return b.updatedAt - a.updatedAt;
     })
-    .slice(0, 10);
+    .slice(0, limit);
 }
 
 /**
  * Merges two leaderboard lists without losing progress when a serverless instance cold-starts.
- * For each username, keeps the record with higher total games/wins or newer timestamp.
  */
 export function mergeLeaderboards(
   primary: LeaderboardEntry[],
@@ -37,10 +46,13 @@ export function mergeLeaderboards(
 
   for (const item of [...secondary, ...primary]) {
     if (!item?.username) continue;
-    const key = item.username.trim().toLowerCase();
+    const clean = item.username.trim();
+    const key = clean.toLowerCase();
+    if (!key || key === "skribblbot") continue;
+
     const normalized: LeaderboardEntry = {
       ...item,
-      username: item.username.trim(),
+      username: clean,
       wins: item.wins ?? 0,
       losses: item.losses ?? 0,
       draws: item.draws ?? 0,
@@ -71,12 +83,12 @@ export function mergeLeaderboards(
     }
   }
 
-  return sortAndCapTop10(Array.from(map.values()));
+  return sortLeaderboardPool(Array.from(map.values()));
 }
 
 /**
- * Upserts a player's match result (win, loss, or draw) into the leaderboard
- * and strictly caps at Top 10 sorted by wins desc.
+ * Upserts a player's match result (win, loss, or draw) into the leaderboard pool.
+ * Keeps up to 100 players in the pool so new players accumulate 1 -> 2 -> 3+ wins instead of being dropped at 1 win!
  */
 export function upsertLeaderboardEntry(
   entries: LeaderboardEntry[],
@@ -86,6 +98,9 @@ export function upsertLeaderboardEntry(
     avatar: AvatarConfig;
     result?: MatchResultType;
     didWin?: boolean;
+    minWins?: number;
+    minLosses?: number;
+    minDraws?: number;
   }
 ): LeaderboardEntry[] {
   const cleanName = payload.username.trim().slice(0, 20) || "AnonDoodler";
@@ -106,29 +121,52 @@ export function upsertLeaderboardEntry(
 
   if (existingIdx >= 0) {
     const current = list[existingIdx];
+    const nextWins = Math.max(
+      current.wins + (outcome === "win" ? 1 : 0),
+      payload.minWins ?? 0
+    );
+    const nextLosses = Math.max(
+      (current.losses ?? 0) + (outcome === "loss" ? 1 : 0),
+      payload.minLosses ?? 0
+    );
+    const nextDraws = Math.max(
+      (current.draws ?? 0) + (outcome === "draw" ? 1 : 0),
+      payload.minDraws ?? 0
+    );
+
     list[existingIdx] = {
       ...current,
       username: cleanName,
-      wins: current.wins + (outcome === "win" ? 1 : 0),
-      losses: (current.losses ?? 0) + (outcome === "loss" ? 1 : 0),
-      draws: (current.draws ?? 0) + (outcome === "draw" ? 1 : 0),
-      gamesPlayed: current.gamesPlayed + 1,
+      wins: nextWins,
+      losses: nextLosses,
+      draws: nextDraws,
+      gamesPlayed: nextWins + nextLosses + nextDraws,
       markId: payload.markId,
       avatar: payload.avatar,
       updatedAt: now,
     };
   } else {
+    const nextWins = Math.max(outcome === "win" ? 1 : 0, payload.minWins ?? 0);
+    const nextLosses = Math.max(
+      outcome === "loss" ? 1 : 0,
+      payload.minLosses ?? 0
+    );
+    const nextDraws = Math.max(
+      outcome === "draw" ? 1 : 0,
+      payload.minDraws ?? 0
+    );
+
     list.push({
       username: cleanName,
-      wins: outcome === "win" ? 1 : 0,
-      losses: outcome === "loss" ? 1 : 0,
-      draws: outcome === "draw" ? 1 : 0,
-      gamesPlayed: 1,
+      wins: nextWins,
+      losses: nextLosses,
+      draws: nextDraws,
+      gamesPlayed: nextWins + nextLosses + nextDraws,
       markId: payload.markId,
       avatar: payload.avatar,
       updatedAt: now,
     });
   }
 
-  return sortAndCapTop10(list);
+  return sortLeaderboardPool(list);
 }

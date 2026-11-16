@@ -11,7 +11,7 @@ import {
   mergeLeaderboards,
   upsertLeaderboardEntry,
 } from "@/lib/leaderboard-service";
-import { LeaderboardEntry, PlayerProfile } from "@/types/game";
+import { GameScores, LeaderboardEntry, PlayerProfile } from "@/types/game";
 
 interface UseLeaderboardOptions {
   onToast?: (title: string, subtitle: string) => void;
@@ -48,7 +48,7 @@ export function useLeaderboard({ onToast }: UseLeaderboardOptions = {}) {
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.leaderboard)) {
-          // Merge local + server so a cold-started Vercel function never overwrites local wins
+          // Merge full player pool so players with 1-2 wins are never dropped before reaching Top 10
           const merged = mergeLeaderboards(localEntries, data.leaderboard);
           setLeaderboard(merged);
           localStorage.setItem(
@@ -62,17 +62,6 @@ export function useLeaderboard({ onToast }: UseLeaderboardOptions = {}) {
               second: "2-digit",
             })
           );
-
-          // If local had newer scores than a cold-started server, heal the server
-          const serverTopWins = data.leaderboard[0]?.wins ?? 0;
-          const mergedTopWins = merged[0]?.wins ?? 0;
-          if (mergedTopWins > serverTopWins) {
-            fetch("/api/leaderboard", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ snapshot: merged }),
-            }).catch(() => {});
-          }
           return;
         }
       }
@@ -84,7 +73,6 @@ export function useLeaderboard({ onToast }: UseLeaderboardOptions = {}) {
   }, []);
 
   useEffect(() => {
-    // Load local storage immediately on mount before network round-trip
     setLeaderboard(readLocalLeaderboard());
     fetchLeaderboard();
 
@@ -122,18 +110,26 @@ export function useLeaderboard({ onToast }: UseLeaderboardOptions = {}) {
       outcomes: Array<{
         profile: PlayerProfile;
         result: MatchResultType;
+        minWins?: number;
+        minLosses?: number;
+        minDraws?: number;
       }>
     ) => {
-      const playersPayload = outcomes.map(({ profile, result }) => ({
-        username: profile.username.trim() || "AnonDoodler",
-        markId: profile.markId,
-        avatar: profile.avatar,
-        result,
-      }));
+      const playersPayload = outcomes.map(
+        ({ profile, result, minWins, minLosses, minDraws }) => ({
+          username: profile.username.trim() || "AnonDoodler",
+          markId: profile.markId,
+          avatar: profile.avatar,
+          result,
+          minWins,
+          minLosses,
+          minDraws,
+        })
+      );
 
       let optimisticSnapshot: LeaderboardEntry[] = [];
 
-      // Frame-0 optimistic update
+      // Frame-0 optimistic update on full pool (never slice(0, 10) on the pool!)
       setLeaderboard((prev) => {
         let next = mergeLeaderboards(prev, readLocalLeaderboard());
         for (const p of playersPayload) {
@@ -159,9 +155,11 @@ export function useLeaderboard({ onToast }: UseLeaderboardOptions = {}) {
             ) + 1;
           if (rank > 0) {
             const item = next[rank - 1];
+            const rankLabel =
+              rank <= 10 ? `Ranked #${rank} in Top 10` : `Rank #${rank}`;
             onToast(
               `${winEntry.username} recorded a Victory!`,
-              `Ranked #${rank} • ${item.wins}W / ${item.draws ?? 0}D / ${
+              `${rankLabel} • ${item.wins}W / ${item.draws ?? 0}D / ${
                 item.losses ?? 0
               }L`
             );
@@ -210,24 +208,53 @@ export function useLeaderboard({ onToast }: UseLeaderboardOptions = {}) {
   );
 
   const recordWin = useCallback(
-    async (winnerProfile: PlayerProfile, loserProfile?: PlayerProfile) => {
-      const outcomes: Array<{
-        profile: PlayerProfile;
-        result: MatchResultType;
-      }> = [{ profile: winnerProfile, result: "win" }];
-      if (loserProfile) {
-        outcomes.push({ profile: loserProfile, result: "loss" });
-      }
-      await syncMatchOutcomes(outcomes);
+    async (
+      winnerProfile: PlayerProfile,
+      loserProfile: PlayerProfile,
+      nextScores: GameScores
+    ) => {
+      const winnerIsP1 = winnerProfile.id === "p1";
+      await syncMatchOutcomes([
+        {
+          profile: winnerProfile,
+          result: "win",
+          minWins: winnerIsP1 ? nextScores.p1 : nextScores.p2,
+          minLosses: winnerIsP1 ? nextScores.p2 : nextScores.p1,
+          minDraws: nextScores.draws,
+        },
+        {
+          profile: loserProfile,
+          result: "loss",
+          minWins: winnerIsP1 ? nextScores.p2 : nextScores.p1,
+          minLosses: winnerIsP1 ? nextScores.p1 : nextScores.p2,
+          minDraws: nextScores.draws,
+        },
+      ]);
     },
     [syncMatchOutcomes]
   );
 
   const recordDraw = useCallback(
-    async (p1Profile: PlayerProfile, p2Profile: PlayerProfile) => {
+    async (
+      p1Profile: PlayerProfile,
+      p2Profile: PlayerProfile,
+      nextScores: GameScores
+    ) => {
       await syncMatchOutcomes([
-        { profile: p1Profile, result: "draw" },
-        { profile: p2Profile, result: "draw" },
+        {
+          profile: p1Profile,
+          result: "draw",
+          minWins: nextScores.p1,
+          minLosses: nextScores.p2,
+          minDraws: nextScores.draws,
+        },
+        {
+          profile: p2Profile,
+          result: "draw",
+          minWins: nextScores.p2,
+          minLosses: nextScores.p1,
+          minDraws: nextScores.draws,
+        },
       ]);
     },
     [syncMatchOutcomes]
